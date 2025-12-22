@@ -5,11 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "arc-stack"
 version = "0.1.0"
-description = "Training and fine-tuning utilities for the Stack model"
+description = "Stack is a single-cell foundation model that enables in-context learning at inference time."
 readme = "README.md"
 license = { file = "LICENSE" }
 authors = [
-    { name = "Arc Stack Team", email = "mingze.dong@yale.edu" }
+    { name = "Mingze Dong", email = "mingze.dong@arcinstitute.org" },
+    { name = "Yusuf Roohani", email = "yusuf.roohani@arcinstitute.org" },
 ]
 requires-python = ">=3.9"
 dependencies = [
