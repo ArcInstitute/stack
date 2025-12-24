@@ -7,25 +7,50 @@ import logging
 import re
 import sys
 from pathlib import Path
-from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple, TYPE_CHECKING
 
-import anndata as ad
-import numpy as np
-import pandas as pd
-import torch
-from scipy.sparse import issparse
+if TYPE_CHECKING:  # pragma: no cover - type checking only
+    import anndata as ad
+    import numpy as np
+    import pandas as pd
+    import torch
+    from scipy.sparse import issparse
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC_PATH = REPO_ROOT / "src"
 if str(SRC_PATH) not in sys.path:
     sys.path.insert(0, str(SRC_PATH))
 
-from stack.data.training.datasets import load_gene_list
-
-from ..model_loading import load_model_from_checkpoint
-
-
 LOGGER = logging.getLogger("stack.generation")
+_DEPS: dict | None = None
+
+
+def _ensure_deps():
+    """Lazy import heavy dependencies to keep ``--help`` responsive."""
+
+    global _DEPS
+    if _DEPS is not None:
+        return _DEPS
+
+    import anndata as ad  # type: ignore
+    import numpy as np  # type: ignore
+    import pandas as pd  # type: ignore
+    import torch  # type: ignore
+    from scipy.sparse import issparse  # type: ignore
+
+    from stack.data.training.datasets import load_gene_list
+    from ..model_loading import load_model_from_checkpoint
+
+    _DEPS = {
+        "ad": ad,
+        "np": np,
+        "pd": pd,
+        "torch": torch,
+        "issparse": issparse,
+        "load_gene_list": load_gene_list,
+        "load_model_from_checkpoint": load_model_from_checkpoint,
+    }
+    return _DEPS
 
 
 def _load_adata(
@@ -36,6 +61,8 @@ def _load_adata(
     backed: Optional[str] = None,
     align_to_target: bool = True,
 ) -> ad.AnnData:
+    deps = _ensure_deps()
+    ad = deps["ad"]
     if isinstance(source, ad.AnnData):
         adata = source
         if adata.isbacked:
@@ -65,6 +92,9 @@ def _align_genes_to_target_list(
     target_genes: Optional[Sequence[str]],
     gene_name_col: Optional[str],
 ) -> ad.AnnData:
+    deps = _ensure_deps()
+    ad = deps["ad"]
+    pd = deps["pd"]
     import scipy.sparse as sp
     
     if not target_genes:
@@ -167,6 +197,8 @@ def _select_split_values(
     split_column: str,
     requested_splits: Optional[Iterable[str]],
 ) -> List[str]:
+    deps = _ensure_deps()
+    np = deps["np"]
     if split_column not in base_adata.obs.columns:
         raise ValueError(
             f"Split column '{split_column}' not found in base AnnData. Available columns: {list(base_adata.obs.columns)}"
@@ -196,6 +228,8 @@ def _prepare_base_subset(
     target_genes: Optional[Sequence[str]],
     gene_name_col: Optional[str],
 ) -> ad.AnnData:
+    deps = _ensure_deps()
+    np = deps["np"]
     mask = base_adata.obs[split_column].astype(str) == split_value
     if not np.any(mask):
         raise ValueError(f"No cells found for split value '{split_value}'.")
@@ -279,6 +313,12 @@ def generate(
     streaming mode. Without a callback the results are accumulated and returned.
     """
 
+    deps = _ensure_deps()
+    ad = deps["ad"]
+    np = deps["np"]
+    load_gene_list = deps["load_gene_list"]
+    load_model_from_checkpoint = deps["load_model_from_checkpoint"]
+
     model = load_model_from_checkpoint(checkpoint_path, model_class="ICL_FinetunedModel")
     target_genes: Optional[List[str]] = load_gene_list(genelist_path) if genelist_path else None
     LOGGER.info("Loading base AnnData from %s in backed mode", base_adata_path)
@@ -343,6 +383,8 @@ def save_generations(
     *,
     concatenate: bool = False,
 ) -> None:
+    deps = _ensure_deps()
+    ad = deps["ad"]
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if not generations:
@@ -368,6 +410,7 @@ def save_generations(
 
 
 def _write_generation(output_dir: Path, split_value: str, adata: ad.AnnData) -> None:
+    _ensure_deps()
     safe_name = _sanitize_split_value(split_value)
     output_path = output_dir / f"{safe_name}.h5ad"
     LOGGER.info("Writing generation for split '%s' to %s", split_value, output_path)
@@ -424,6 +467,7 @@ def main(args: Optional[List[str]] = None) -> None:
     parser = build_parser()
     parsed = parser.parse_args(args=args)
 
+    _ensure_deps()
     logging.basicConfig(level=logging.INFO)
 
     output_dir = Path(parsed.output_dir)

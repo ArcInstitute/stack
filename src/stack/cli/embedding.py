@@ -5,26 +5,54 @@ from __future__ import annotations
 import argparse
 import logging
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, TYPE_CHECKING
 
-import anndata as ad
-import numpy as np
-import pandas as pd
-import torch
-
-from ..model_loading import load_model_from_checkpoint
+if TYPE_CHECKING:  # pragma: no cover - type checking only
+    import anndata as ad
+    import numpy as np
+    import pandas as pd
+    import torch
 
 
 LOGGER = logging.getLogger("stack.embedding")
+_DEPS: dict | None = None
+
+
+def _ensure_deps():
+    """Lazy import heavy runtime dependencies to keep ``--help`` fast."""
+
+    global _DEPS
+    if _DEPS is not None:
+        return _DEPS
+
+    import anndata as ad  # type: ignore
+    import numpy as np  # type: ignore
+    import pandas as pd  # type: ignore
+    import torch  # type: ignore
+
+    from ..model_loading import load_model_from_checkpoint
+
+    _DEPS = {
+        "ad": ad,
+        "np": np,
+        "pd": pd,
+        "torch": torch,
+        "load_model_from_checkpoint": load_model_from_checkpoint,
+    }
+    return _DEPS
 
 
 def _resolve_device(device_arg: str) -> torch.device:
+    deps = _ensure_deps()
+    torch = deps["torch"]
     if device_arg == "auto":
         return torch.device("cuda" if torch.cuda.is_available() else "cpu")
     return torch.device(device_arg)
 
 
 def _load_model(checkpoint_path: str, device: torch.device) -> torch.nn.Module:
+    deps = _ensure_deps()
+    load_model_from_checkpoint = deps["load_model_from_checkpoint"]
     return load_model_from_checkpoint(checkpoint_path, device=device)
 
 
@@ -43,6 +71,9 @@ def extract_embeddings(
 ) -> Tuple[np.ndarray, Optional[np.ndarray]]:
     """Extract embeddings for all cells in ``adata_path`` using the trained model."""
 
+    deps = _ensure_deps()
+    np = deps["np"]
+    torch = deps["torch"]
     model = _load_model(checkpoint_path, _resolve_device(device))
 
     dataloader_kwargs = {}
@@ -64,6 +95,9 @@ def extract_embeddings(
 
 
 def _build_obs_dataframe(obs_source: Optional[str], n_cells: int) -> pd.DataFrame:
+    deps = _ensure_deps()
+    ad = deps["ad"]
+    pd = deps["pd"]
     if obs_source is None:
         index = [f"cell_{idx}" for idx in range(n_cells)]
         return pd.DataFrame(index=index)
@@ -84,6 +118,11 @@ def save_embeddings(
     obs_source: Optional[str] = None,
 ) -> None:
     """Persist embeddings to disk in either NumPy or AnnData format."""
+
+    deps = _ensure_deps()
+    ad = deps["ad"]
+    np = deps["np"]
+    pd = deps["pd"]
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     if output_path.suffix == ".h5ad":

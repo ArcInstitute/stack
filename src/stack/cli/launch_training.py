@@ -8,25 +8,52 @@ import logging
 import os
 from typing import Dict
 
-import pytorch_lightning as pl
-import torch
-from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint
-from pytorch_lightning.loggers import TensorBoardLogger, WandbLogger
-from pytorch_lightning.strategies import DDPStrategy
-
 try:  # pragma: no cover - runtime import resolution
     from stack.cli_utils import apply_config_from_file, filter_unused_arguments
-    from stack.training.datamodule import MultiDatasetDataModule
-    from stack.training.lightning import LegacyLightningGeneModel
-    from stack.training.utils import build_scheduler_config, localize_datasets, parse_dataset_configs
 except ImportError:  # pragma: no cover - script execution fallback
     from cli_utils import apply_config_from_file, filter_unused_arguments  # type: ignore
-    from training.datamodule import MultiDatasetDataModule  # type: ignore
-    from training.lightning import LegacyLightningGeneModel  # type: ignore
-    from training.utils import build_scheduler_config, localize_datasets, parse_dataset_configs  # type: ignore
 
 
-torch.set_float32_matmul_precision("high")
+def _import_training_modules():
+    """Lazy import heavy dependencies so ``--help`` stays fast."""
+
+    try:
+        import torch  # type: ignore
+        import pytorch_lightning as pl  # type: ignore
+        from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint
+        from pytorch_lightning.loggers import TensorBoardLogger, WandbLogger
+        from pytorch_lightning.strategies import DDPStrategy
+
+        from stack.training.datamodule import MultiDatasetDataModule
+        from stack.training.lightning import LegacyLightningGeneModel
+        from stack.training.utils import build_scheduler_config, localize_datasets, parse_dataset_configs
+    except ImportError:  # pragma: no cover - script execution fallback
+        import torch  # type: ignore
+        import pytorch_lightning as pl  # type: ignore
+        from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint  # type: ignore
+        from pytorch_lightning.loggers import TensorBoardLogger, WandbLogger  # type: ignore
+        from pytorch_lightning.strategies import DDPStrategy  # type: ignore
+
+        from training.datamodule import MultiDatasetDataModule  # type: ignore
+        from training.lightning import LegacyLightningGeneModel  # type: ignore
+        from training.utils import build_scheduler_config, localize_datasets, parse_dataset_configs  # type: ignore
+
+    torch.set_float32_matmul_precision("high")
+    return {
+        "torch": torch,
+        "pl": pl,
+        "EarlyStopping": EarlyStopping,
+        "LearningRateMonitor": LearningRateMonitor,
+        "ModelCheckpoint": ModelCheckpoint,
+        "TensorBoardLogger": TensorBoardLogger,
+        "WandbLogger": WandbLogger,
+        "DDPStrategy": DDPStrategy,
+        "MultiDatasetDataModule": MultiDatasetDataModule,
+        "LegacyLightningGeneModel": LegacyLightningGeneModel,
+        "build_scheduler_config": build_scheduler_config,
+        "localize_datasets": localize_datasets,
+        "parse_dataset_configs": parse_dataset_configs,
+    }
 
 
 def build_model_config(args: argparse.Namespace, n_genes: int) -> Dict[str, int | float]:
@@ -125,6 +152,21 @@ def main() -> None:
 
     args = parser.parse_args(remaining_argv)
     filter_unused_arguments(args, ("dataset_configs", "genelist_path"), parser)
+
+    deps = _import_training_modules()
+    torch = deps["torch"]
+    pl = deps["pl"]
+    EarlyStopping = deps["EarlyStopping"]
+    LearningRateMonitor = deps["LearningRateMonitor"]
+    ModelCheckpoint = deps["ModelCheckpoint"]
+    TensorBoardLogger = deps["TensorBoardLogger"]
+    WandbLogger = deps["WandbLogger"]
+    DDPStrategy = deps["DDPStrategy"]
+    MultiDatasetDataModule = deps["MultiDatasetDataModule"]
+    LegacyLightningGeneModel = deps["LegacyLightningGeneModel"]
+    build_scheduler_config = deps["build_scheduler_config"]
+    localize_datasets = deps["localize_datasets"]
+    parse_dataset_configs = deps["parse_dataset_configs"]
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
     if config_args.config:

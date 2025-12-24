@@ -8,44 +8,75 @@ import logging
 import os
 from typing import Dict
 
-import pytorch_lightning as pl
-import torch
-from pytorch_lightning.callbacks import (
-    EarlyStopping,
-    LearningRateMonitor,
-    ModelCheckpoint,
-)
-from pytorch_lightning.loggers import Logger
-from pytorch_lightning.strategies import DDPStrategy
-
 try:  # pragma: no cover - runtime import resolution
     from stack.cli_utils import apply_config_from_file, filter_unused_arguments
-    from stack.finetune.datamodule import FinetuneDataModule, MultiDatasetDataModule
-    from stack.finetune.lightning import LightningFinetunedModel
-    from stack.finetune.utils import (
-        build_model_config,
-        build_scheduler_config,
-        configure_logger,
-        override_model_config_n_cells,
-        parse_dataset_configs,
-    )
 except ImportError:  # pragma: no cover - script execution fallback
     from cli_utils import apply_config_from_file, filter_unused_arguments  # type: ignore
-    from finetune.datamodule import FinetuneDataModule, MultiDatasetDataModule  # type: ignore
-    from finetune.lightning import LightningFinetunedModel  # type: ignore
-    from finetune.utils import (  # type: ignore
-        build_model_config,
-        build_scheduler_config,
-        configure_logger,
-        override_model_config_n_cells,
-        parse_dataset_configs,
-    )
-
-
-torch.set_float32_matmul_precision("high")
 
 # Backwards compatibility alias --------------------------------------------------------------------
-_override_model_config_n_cells = override_model_config_n_cells
+def _override_model_config_n_cells(*args, **kwargs):
+    """Lazily dispatch to override_model_config_n_cells for callers importing this alias."""
+
+    deps = _import_training_modules()
+    return deps["override_model_config_n_cells"](*args, **kwargs)
+
+
+def _import_training_modules():
+    """Lazy import heavy dependencies so ``--help`` stays fast."""
+
+    try:
+        import torch  # type: ignore
+        import pytorch_lightning as pl  # type: ignore
+        from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint
+        from pytorch_lightning.loggers import Logger, TensorBoardLogger, WandbLogger
+        from pytorch_lightning.strategies import DDPStrategy
+
+        from stack.finetune.datamodule import FinetuneDataModule, MultiDatasetDataModule
+        from stack.finetune.lightning import LightningFinetunedModel
+        from stack.finetune.utils import (
+            build_model_config,
+            build_scheduler_config,
+            configure_logger,
+            override_model_config_n_cells,
+            parse_dataset_configs,
+        )
+    except ImportError:  # pragma: no cover - script execution fallback
+        import torch  # type: ignore
+        import pytorch_lightning as pl  # type: ignore
+        from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint  # type: ignore
+        from pytorch_lightning.loggers import Logger, TensorBoardLogger, WandbLogger  # type: ignore
+        from pytorch_lightning.strategies import DDPStrategy  # type: ignore
+
+        from finetune.datamodule import FinetuneDataModule, MultiDatasetDataModule  # type: ignore
+        from finetune.lightning import LightningFinetunedModel  # type: ignore
+        from finetune.utils import (  # type: ignore
+            build_model_config,
+            build_scheduler_config,
+            configure_logger,
+            override_model_config_n_cells,
+            parse_dataset_configs,
+        )
+
+    torch.set_float32_matmul_precision("high")
+    return {
+        "torch": torch,
+        "pl": pl,
+        "EarlyStopping": EarlyStopping,
+        "LearningRateMonitor": LearningRateMonitor,
+        "ModelCheckpoint": ModelCheckpoint,
+        "Logger": Logger,
+        "TensorBoardLogger": TensorBoardLogger,
+        "WandbLogger": WandbLogger,
+        "DDPStrategy": DDPStrategy,
+        "FinetuneDataModule": FinetuneDataModule,
+        "MultiDatasetDataModule": MultiDatasetDataModule,
+        "LightningFinetunedModel": LightningFinetunedModel,
+        "build_model_config": build_model_config,
+        "build_scheduler_config": build_scheduler_config,
+        "configure_logger": configure_logger,
+        "override_model_config_n_cells": override_model_config_n_cells,
+        "parse_dataset_configs": parse_dataset_configs,
+    }
 
 
 def configure_callbacks(args: argparse.Namespace):
@@ -216,6 +247,25 @@ def main() -> None:
     apply_config_from_file(parser, config_args.config)
     args = parser.parse_args(remaining_argv)
     filter_unused_arguments(args, ("dataset_configs", "genelist_path"), parser)
+
+    deps = _import_training_modules()
+    torch = deps["torch"]
+    pl = deps["pl"]
+    EarlyStopping = deps["EarlyStopping"]
+    LearningRateMonitor = deps["LearningRateMonitor"]
+    ModelCheckpoint = deps["ModelCheckpoint"]
+    Logger = deps["Logger"]
+    TensorBoardLogger = deps["TensorBoardLogger"]
+    WandbLogger = deps["WandbLogger"]
+    DDPStrategy = deps["DDPStrategy"]
+    FinetuneDataModule = deps["FinetuneDataModule"]
+    MultiDatasetDataModule = deps["MultiDatasetDataModule"]
+    LightningFinetunedModel = deps["LightningFinetunedModel"]
+    build_model_config = deps["build_model_config"]
+    build_scheduler_config = deps["build_scheduler_config"]
+    configure_logger = deps["configure_logger"]
+    override_model_config_n_cells = deps["override_model_config_n_cells"]
+    parse_dataset_configs = deps["parse_dataset_configs"]
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
     if config_args.config:
