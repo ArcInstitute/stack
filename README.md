@@ -1,5 +1,5 @@
 
-# Stack: In-context modeling of human biology
+# Stack: In-context modeling of single-cell biology
 
 Stack is a large-scale encoder-decoder foundation model trained on 150 million uniformly-preprocessed single cells. It introduces a novel tabular attention architecture that enables both intra- and inter-cellular information flow, setting cell-by-gene matrix chunks as the basic input data unit. Through in-context learning, Stack offers substantial performance improvements in generalizing biological effects and enables generation of unseen cell profiles in novel contexts.
 
