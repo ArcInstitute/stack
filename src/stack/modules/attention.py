@@ -73,7 +73,7 @@ class TabularAttentionLayer(nn.Module):
         super().__init__()
 
         cell_attn_dim = token_dim
-        cell_attn_heads = n_heads
+        cell_attn_heads = 8
         # The model dimension must be divisible by the number of attention heads.
         # If not, find the largest valid number of heads smaller than or equal to n_heads.
         if cell_attn_dim % cell_attn_heads != 0:
