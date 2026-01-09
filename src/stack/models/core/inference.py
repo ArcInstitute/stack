@@ -862,7 +862,8 @@ class InferenceMixin:
         genelist_path: str,
         num_steps: int = 5,
         prompt_ratio: float = 0.25,
-        context_ratio: float = 0.25,
+        context_ratio: float = 0.4,
+        context_ratio_min: float = 0.2,
         mask_rate: float = 1.0,
         mode: str = 'vanilla',
         gene_name_col: Optional[str] = None,
@@ -877,12 +878,16 @@ class InferenceMixin:
         Difference to in-context prediction: generation comprises multiple steps and follows the schedule alpha = 1-1/t.
         """
         assert 0 < (prompt_ratio+context_ratio) < 1, "Ratio must be between 0 and 1."
+        assert 0 <= context_ratio_min <= context_ratio < 1, "Min context ratio must be smaller than 1 and context ratio"
         from scipy.sparse import csr_matrix
         if num_steps is None:
             num_steps = math.ceil(1.0/mask_rate)
 
         t = (np.arange(num_steps, dtype=np.float32)+1) / num_steps
-        #mr_list = np.cos(t * np.pi / 2.0)
+        if num_steps == 1:
+            cr_list = np.array([context_ratio], dtype=np.float32)
+        else:
+            cr_list = np.linspace(context_ratio_min, context_ratio, num_steps, dtype=np.float32)
         mr_list = (1 - t) 
         mr_list[-1] = 0.0
         if isinstance(test_adata_or_path, str):
@@ -920,14 +925,14 @@ class InferenceMixin:
                 g.manual_seed(int(random_seed))
             test_logit = None
             is_masked = np.ones(test_adata.shape[0],dtype=bool)
-            for mr in mr_list:
+            for mr, cr in zip(mr_list, cr_list):
                 result, test_logit, is_masked = self.get_incontext_prediction(
                    base_adata_or_path = base_adata_or_path,
                    test_adata_or_path = test_adata,
                    genelist_path = genelist_path,
                    mask_rate = mr,
                    prompt_ratio = prompt_ratio,
-                   context_ratio = context_ratio,
+                   context_ratio = cr,
                    mode = 'generate',
                    test_logit = test_logit,
                    is_masked = is_masked,
