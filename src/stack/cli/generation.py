@@ -253,6 +253,7 @@ def _run_incontext_generation(
     gene_name_col: Optional[str],
     prompt_ratio: float,
     context_ratio: float,
+    context_ratio_min: float,
     mask_rate: float,
     mode: str,
     num_steps: Optional[int],
@@ -267,6 +268,7 @@ def _run_incontext_generation(
         genelist_path=genelist_path,
         prompt_ratio=prompt_ratio,
         context_ratio=context_ratio,
+        context_ratio_min=context_ratio_min,
         mask_rate=mask_rate,
         mode=mode,
         num_steps=num_steps,
@@ -294,7 +296,8 @@ def generate(
     split_values: Optional[Sequence[str]] = None,
     gene_name_col: Optional[str] = None,
     prompt_ratio: float = 0.25,
-    context_ratio: float = 0.25,
+    context_ratio: float = 0.4,
+    context_ratio_min: float = 0.2,
     mask_rate: float = 1.0,
     num_steps: Optional[int] = None,
     mode: str = "vanilla",
@@ -351,6 +354,7 @@ def generate(
             gene_name_col=gene_name_col,
             prompt_ratio=prompt_ratio,
             context_ratio=context_ratio,
+            context_ratio_min=context_ratio_min,
             mask_rate=mask_rate,
             mode=mode,
             num_steps=num_steps,
@@ -437,7 +441,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional column in adata.var/raw.var containing gene symbols for alignment",
     )
     parser.add_argument("--prompt-ratio", type=float, default=0.25, help="Prompt ratio passed to in-context generation")
-    parser.add_argument("--context-ratio", type=float, default=0.25, help="Context ratio passed to in-context generation")
+    parser.add_argument("--context-ratio", type=float, default=0.4, help="Context ratio passed to in-context generation")
+    parser.add_argument("--context-ratio-min", type=float, default=0.2, help="Min value of context ratio")
     parser.add_argument("--mask-rate", type=float, default=1.0, help="Mask rate used during in-context generation")
     parser.add_argument(
         "--num-steps",
@@ -484,6 +489,7 @@ def main(args: Optional[List[str]] = None) -> None:
             gene_name_col=parsed.gene_name_col,
             prompt_ratio=parsed.prompt_ratio,
             context_ratio=parsed.context_ratio,
+            context_ratio_min=parsed.context_ratio_min,
             mask_rate=parsed.mask_rate,
             num_steps=parsed.num_steps,
             mode=parsed.mode,
@@ -513,6 +519,7 @@ def main(args: Optional[List[str]] = None) -> None:
         gene_name_col=parsed.gene_name_col,
         prompt_ratio=parsed.prompt_ratio,
         context_ratio=parsed.context_ratio,
+        context_ratio_min=parsed.context_ratio_min,
         mask_rate=parsed.mask_rate,
         num_steps=parsed.num_steps,
         mode=parsed.mode,
