@@ -10,6 +10,7 @@ from .h5_manager import (
 from .hvg import compute_analytic_pearson_residuals, compute_hvg_union
 from . import training as training_data
 from . import finetuning as finetuning_data
+from . import perturbation as perturbation_data
 
 __all__ = sorted(
     {
@@ -24,6 +25,7 @@ __all__ = sorted(
         "compute_hvg_union",
         "training_data",
         "finetuning_data",
+        "perturbation_data",
     }
     | {name for name in globals().keys() if not name.startswith("_")}
 )

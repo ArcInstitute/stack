@@ -1,0 +1,82 @@
+# Configuration for training PerturbationExpert on Replogle dataset
+#
+# Usage (single fold):
+#   python scripts/train_perturbation_expert.py \
+#       --config configs/perturbation/replogle.yaml \
+#       --stack-checkpoint /path/to/stack_checkpoint.ckpt \
+#       --fold 0 \
+#       --gpus 4
+#
+# 4-fold cross-validation:
+#   # Fold 0: K562 as test set
+#   python scripts/train_perturbation_expert.py --config configs/perturbation/replogle.yaml --fold 0 ...
+#   # Fold 1: HepG2 as test set
+#   python scripts/train_perturbation_expert.py --config configs/perturbation/replogle.yaml --fold 1 ...
+#   # Fold 2: Jurkat as test set
+#   python scripts/train_perturbation_expert.py --config configs/perturbation/replogle.yaml --fold 2 ...
+#   # Fold 3: RPE1 as test set
+#   python scripts/train_perturbation_expert.py --config configs/perturbation/replogle.yaml --fold 3 ...
+
+# Data configuration
+data_path: "/data/replogle_nogwps_v2/replogle_concat.h5ad"
+perturbation_col: "gene"
+control_label: "non-targeting"
+cell_line_col: "cell_line"
+
+# TOML directory for train/test splits (4-fold cross-validation)
+# Contains: k562.toml, hepg2.toml, jurkat.toml, rpe1.toml
+split_toml_dir: "/data/replogle_nogwps_v2/"
+
+# Fold for 4-fold CV (0=K562, 1=HepG2, 2=Jurkat, 3=RPE1)
+# Set via CLI: --fold 0
+# If null, combines all TOML test genes into one test set
+fold: null
+
+# Gene list (optional, if using subset of genes)
+# genelist_path: "/path/to/hvg_genes.pkl"
+
+# Model configuration
+n_cells: 32
+hidden_dim: 1024
+cond_dim: 256
+n_layers: 6
+n_heads: 8
+dropout: 0.1
+
+# Training configuration
+batch_size: 16
+learning_rate: 1e-4
+weight_decay: 1e-4
+max_epochs: 100
+warmup_epochs: 5
+num_workers: 4
+
+# Inference configuration
+num_sampling_steps: 100
+
+# Scheduler configuration
+scheduler: "cosine"
+scheduler_T_max: 100
+scheduler_warmup_epochs: 5
+scheduler_eta_min: 1e-6
+
+# System configuration
+gpus: -1  # Use all available GPUs
+strategy: "ddp"
+precision: "bf16-mixed"
+accumulate_grad_batches: 1
+gradient_clip_val: 1.0
+
+# Logging configuration
+project_name: "perturbation_expert"
+run_name: null  # Auto-generated if null
+save_dir: "/checkpoints/pert_expert"
+logger: "wandb"
+log_every_n_steps: 10
+
+# Early stopping
+early_stopping_patience: 20
+early_stopping_min_delta: 1e-4
+
+# Random seed
+seed: 42

@@ -8,8 +8,9 @@ from typing import Optional, TYPE_CHECKING
 if TYPE_CHECKING:  # pragma: no cover - imported for type checking only
     import torch
 
-from .models.core import StateICLModel, scShiftAttentionModel
-from .model_finetune import ICL_FinetunedModel
+# Lazy imports to avoid triggering scvi at module load time
+# from .models.core import StateICLModel, scShiftAttentionModel
+# from .model_finetune import ICL_FinetunedModel
 
 LOGGER = logging.getLogger("stack.model_loading")
 
@@ -51,9 +52,12 @@ def load_model_from_checkpoint(
 
         model_config = checkpoint["hyper_parameters"].get("model_config", {})
 
+        # Lazy imports to avoid triggering scvi at module load time
         if model_class in {"scShiftAttentionModel", "StateICLModel"}:
+            from .models.core import StateICLModel
             model = StateICLModel(**model_config)
         elif model_class in {"ICLFinetunedModel", "ICL_FinetunedModel"}:
+            from .model_finetune import ICL_FinetunedModel
             model = ICL_FinetunedModel(**model_config)
         else:
             raise ValueError(f"Unknown model class: {model_class}")

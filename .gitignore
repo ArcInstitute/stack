@@ -13,6 +13,7 @@ eggs/
 .eggs/
 lib/
 lib64/
+logs/
 parts/
 sdist/
 var/
@@ -61,3 +62,10 @@ venv.bak/
 # OS
 .DS_Store
 Thumbs.db
+
+# Model checkpoints and results
+models/
+results/
+*.ckpt
+*.pt
+*.pth
