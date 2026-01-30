@@ -128,8 +128,9 @@ class LightningPerturbationExpert(pl.LightningModule):
             )
 
             # Compute correlation between sampled and actual perturbed
+            # Note: perturbed is ALREADY log1p normalized from dataset
             pred_log1p = sampled["perturbed_log1p"]
-            target_log1p = torch.log1p(perturbed)
+            target_log1p = perturbed  # Already log1p normalized
 
             # Per-gene correlation (averaged across batch and cells)
             gene_corr = self._compute_gene_correlation(pred_log1p, target_log1p)

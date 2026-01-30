@@ -1,4 +1,18 @@
-"""Dataset classes for perturbation prediction experiments."""
+"""Dataset classes for perturbation prediction experiments.
+
+Data Format Assumptions:
+    The input h5ad files are expected to contain LOG1P NORMALIZED expression data.
+    This is the standard format for the Replogle dataset and similar perturbation
+    datasets. The models do NOT apply additional log1p transformation.
+
+    Characteristic of log1p normalized data:
+    - Max values typically in range [5, 15]
+    - Many values are fractional (between 0 and 1)
+    - Non-negative values only
+
+    If your data is in raw counts, apply log1p normalization before using:
+        adata.X = np.log1p(adata.X)
+"""
 
 from __future__ import annotations
 
@@ -177,14 +191,22 @@ class PerturbationDataset(Dataset):
         self.gene_names = self.adata.var_names.values
         self.n_genes = len(self.gene_names)
 
-        # Identify control cells
+        # Identify control cells (global)
         self.control_mask = self.perturbations == self.config.control_label
         self.control_indices = np.where(self.control_mask)[0]
+
+        # Build cell-line specific control indices
+        self.control_indices_by_cellline: Dict[str, np.ndarray] = {}
+        for cl in np.unique(self.cell_lines):
+            cl_mask = (self.perturbations == self.config.control_label) & (self.cell_lines == cl)
+            self.control_indices_by_cellline[cl] = np.where(cl_mask)[0]
 
         log.info(
             f"Loaded {self.n_cells_total} cells, {self.n_genes} genes, "
             f"{len(self.control_indices)} control cells"
         )
+        for cl, indices in self.control_indices_by_cellline.items():
+            log.info(f"  Control cells in {cl}: {len(indices)}")
 
         # If we have a genelist, build the mapping
         self.gene_mapping = None
@@ -408,6 +430,9 @@ class PerturbationDataset(Dataset):
 
         If a perturbation doesn't have enough cells, resample with replacement
         to ensure every perturbation is represented.
+
+        Each sample is a tuple of (pert_name, cell_indices, cell_line) to enable
+        cell-line-matched control sampling.
         """
         for cell_line in cell_lines:
             key = (pert, cell_line)
@@ -429,13 +454,13 @@ class PerturbationDataset(Dataset):
                     start_idx = i * self.config.n_cells
                     end_idx = start_idx + self.config.n_cells
                     sample_indices = indices[start_idx:end_idx]
-                    self.samples.append((pert, sample_indices))
+                    self.samples.append((pert, sample_indices, cell_line))
             else:
                 # Not enough cells: resample with replacement to fill n_cells
                 sample_indices = self.rng.choice(
                     indices, size=self.config.n_cells, replace=True
                 )
-                self.samples.append((pert, sample_indices))
+                self.samples.append((pert, sample_indices, cell_line))
 
     def _load_expression(self, indices: np.ndarray) -> np.ndarray:
         """Load expression data for given cell indices.
@@ -469,16 +494,31 @@ class PerturbationDataset(Dataset):
 
         return expr_data.astype(np.float32)
 
-    def _sample_control_cells(self, n_cells: int) -> np.ndarray:
-        """Sample control cells for context."""
-        if len(self.control_indices) < n_cells:
+    def _sample_control_cells(self, n_cells: int, cell_line: Optional[str] = None) -> np.ndarray:
+        """Sample control cells for context, optionally from a specific cell line.
+
+        Args:
+            n_cells: Number of control cells to sample.
+            cell_line: If provided, sample only from this cell line's control cells.
+                      This ensures control and perturbed cells are from the same cell line.
+
+        Returns:
+            Array of cell indices for control cells.
+        """
+        # Use cell-line-specific controls if available and requested
+        if cell_line is not None and cell_line in self.control_indices_by_cellline:
+            control_pool = self.control_indices_by_cellline[cell_line]
+        else:
+            control_pool = self.control_indices
+
+        if len(control_pool) < n_cells:
             # Upsample if not enough control cells
             indices = self.rng.choice(
-                self.control_indices, size=n_cells, replace=True
+                control_pool, size=n_cells, replace=True
             )
         else:
             indices = self.rng.choice(
-                self.control_indices, size=n_cells, replace=False
+                control_pool, size=n_cells, replace=False
             )
         return indices
 
@@ -495,13 +535,15 @@ class PerturbationDataset(Dataset):
                 - perturbation_id: Perturbation ID (scalar)
                 - perturbation_name: Perturbation name (string, for debugging)
         """
-        pert, pert_indices = self.samples[idx]
+        pert, pert_indices, cell_line = self.samples[idx]
 
         # Load perturbed cell expression
         perturbed_expr = self._load_expression(pert_indices)
 
-        # Sample and load control cells
-        control_indices = self._sample_control_cells(self.config.n_cells)
+        # Sample and load control cells FROM THE SAME CELL LINE
+        # This ensures delta = perturbed - control reflects perturbation effect,
+        # not cell-line baseline differences
+        control_indices = self._sample_control_cells(self.config.n_cells, cell_line=cell_line)
         control_expr = self._load_expression(control_indices)
 
         # Get perturbation ID

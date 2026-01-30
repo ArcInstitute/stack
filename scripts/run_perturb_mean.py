@@ -62,22 +62,28 @@ def create_dataset(args, mode: str):
     return dataset
 
 
-def run_inference(
+def run_inference_and_save(
     model,
     dataset,
     device: torch.device,
+    gene_names: List[str],
+    output_path: str,
+    fold: Optional[int] = None,
     batch_size: int = 8,
     num_workers: int = 4,
-) -> Dict[str, Any]:
-    """Run inference on the dataset and collect predictions.
+    create_aggregated: bool = False,
+) -> Dict[str, float]:
+    """Run inference and save results in a memory-efficient streaming manner.
+
+    Instead of accumulating all predictions in memory, this function:
+    1. Computes metrics incrementally using running statistics
+    2. Writes h5ad file in chunks to avoid OOM
 
     Returns:
-        Dictionary containing:
-            - predictions: np.array of predicted expression (n_samples, n_cells, n_genes)
-            - ground_truth: np.array of actual perturbed expression
-            - control: np.array of control expression used as context
-            - perturbation_names: List of perturbation names
+        Dictionary of computed metrics.
     """
+    import anndata as ad
+    import pandas as pd
     from torch.utils.data import DataLoader
 
     dataloader = DataLoader(
@@ -88,17 +94,44 @@ def run_inference(
         pin_memory=True,
     )
 
-    all_predictions = []
-    all_ground_truth = []
-    all_control = []
+    n_genes = len(gene_names)
+    n_cells_per_batch = dataset.config.n_cells
+    control_label = dataset.config.control_label  # e.g., "non-targeting"
+
+    # For incremental metrics computation
+    # We'll compute per-perturbation mean predictions and ground truth
+    pert_to_pred_sum = {}
+    pert_to_gt_sum = {}
+    pert_to_count = {}
+
+    # For control expression (needed for cell-eval)
+    control_sum = np.zeros(n_genes, dtype=np.float64)
+    control_count = 0
+
+    # For MSE computation
+    mse_log1p_sum = 0.0
+    mse_raw_sum = 0.0
+    total_elements = 0
+
+    # Collect all perturbation names for h5ad
     all_pert_names = []
 
+    # First pass: compute metrics and collect perturbation info
+    logging.info("Running inference and computing metrics...")
     model.eval()
+
+    # We'll store aggregated predictions per perturbation for gene correlation
     with torch.no_grad():
         for batch in tqdm(dataloader, desc="Running inference"):
             control = batch["control_features"].to(device)
             perturbed = batch["perturbed_features"]
             pert_names = batch["perturbation_name"]
+
+            # Accumulate control expression (mean across cells in batch)
+            # Note: control is already log1p normalized from the dataset
+            control_np = control.cpu().numpy()
+            control_sum += control_np.mean(axis=(0, 1))  # Mean across batch and cells
+            control_count += 1
 
             # Generate predictions
             result = model.sample(
@@ -106,45 +139,54 @@ def run_inference(
                 perturbation_names=list(pert_names),
             )
 
-            # Collect results
-            all_predictions.append(result["perturbed"].cpu().numpy())
-            all_ground_truth.append(perturbed.numpy())
-            all_control.append(control.cpu().numpy())
+            # Use log1p outputs directly (data is already log1p normalized)
+            pred_log1p = result["perturbed_log1p"].cpu().numpy()
+            gt_log1p = perturbed.numpy()  # Already log1p from dataset
+
+            # Compute MSE incrementally (both in log1p space)
+            mse_log1p_sum += np.sum((pred_log1p - gt_log1p) ** 2)
+            # Also compute approximate raw space MSE for comparison
+            pred_raw = np.expm1(pred_log1p)
+            gt_raw = np.expm1(gt_log1p)
+            mse_raw_sum += np.sum((pred_raw - gt_raw) ** 2)
+            total_elements += pred_log1p.size
+
+            # Aggregate per perturbation (mean across cells) - keep in log1p space
+            pred_mean = pred_log1p.mean(axis=1)  # (B, n_genes)
+            gt_mean = gt_log1p.mean(axis=1)
+
+            for i, pert_name in enumerate(pert_names):
+                if pert_name not in pert_to_pred_sum:
+                    pert_to_pred_sum[pert_name] = np.zeros(n_genes, dtype=np.float64)
+                    pert_to_gt_sum[pert_name] = np.zeros(n_genes, dtype=np.float64)
+                    pert_to_count[pert_name] = 0
+                pert_to_pred_sum[pert_name] += pred_mean[i]
+                pert_to_gt_sum[pert_name] += gt_mean[i]
+                pert_to_count[pert_name] += 1
+
             all_pert_names.extend(pert_names)
 
-    return {
-        "predictions": np.concatenate(all_predictions, axis=0),
-        "ground_truth": np.concatenate(all_ground_truth, axis=0),
-        "control": np.concatenate(all_control, axis=0),
-        "perturbation_names": all_pert_names,
-    }
+    # Compute final metrics
+    mse_log1p = mse_log1p_sum / total_elements
+    mse_raw = mse_raw_sum / total_elements
 
+    # Compute gene correlations from aggregated per-perturbation means
+    unique_perts = sorted(pert_to_pred_sum.keys())
+    n_perts = len(unique_perts)
 
-def compute_metrics(results: Dict[str, Any]) -> Dict[str, float]:
-    """Compute evaluation metrics.
+    pred_matrix = np.zeros((n_perts, n_genes), dtype=np.float32)
+    gt_matrix = np.zeros((n_perts, n_genes), dtype=np.float32)
 
-    Args:
-        results: Dictionary with predictions and ground_truth arrays.
+    for i, pert in enumerate(unique_perts):
+        pred_matrix[i] = pert_to_pred_sum[pert] / pert_to_count[pert]
+        gt_matrix[i] = pert_to_gt_sum[pert] / pert_to_count[pert]
 
-    Returns:
-        Dictionary of metrics including gene correlations and MSE.
-    """
-    predictions = results["predictions"]  # (n_batches, n_cells, n_genes)
-    ground_truth = results["ground_truth"]
-
-    # Aggregate across cells (mean per batch)
-    pred_mean = predictions.mean(axis=1)  # (n_batches, n_genes)
-    gt_mean = ground_truth.mean(axis=1)
-
-    # Compute gene-wise correlations (across samples)
-    n_genes = pred_mean.shape[1]
+    # Compute gene-wise correlations
     gene_correlations = []
-
     for gene_idx in range(n_genes):
-        pred_gene = pred_mean[:, gene_idx]
-        gt_gene = gt_mean[:, gene_idx]
+        pred_gene = pred_matrix[:, gene_idx]
+        gt_gene = gt_matrix[:, gene_idx]
 
-        # Skip genes with no variance
         if np.std(pred_gene) < 1e-8 or np.std(gt_gene) < 1e-8:
             continue
 
@@ -154,14 +196,6 @@ def compute_metrics(results: Dict[str, Any]) -> Dict[str, float]:
 
     gene_correlations = np.array(gene_correlations)
 
-    # Compute MSE in log1p space
-    pred_log1p = np.log1p(predictions)
-    gt_log1p = np.log1p(ground_truth)
-    mse_log1p = np.mean((pred_log1p - gt_log1p) ** 2)
-
-    # Compute MSE in raw space
-    mse_raw = np.mean((predictions - ground_truth) ** 2)
-
     metrics = {
         "gene_correlation_mean": float(np.mean(gene_correlations)),
         "gene_correlation_median": float(np.median(gene_correlations)),
@@ -169,158 +203,70 @@ def compute_metrics(results: Dict[str, Any]) -> Dict[str, float]:
         "mse_log1p": float(mse_log1p),
         "mse_raw": float(mse_raw),
         "n_genes_evaluated": len(gene_correlations),
-        "n_samples": len(results["perturbation_names"]),
+        "n_samples": len(all_pert_names),
+        "n_unique_perturbations": len(unique_perts),
     }
 
-    return metrics
+    # Compute mean control expression
+    control_mean = (control_sum / control_count).astype(np.float32)
 
+    # Add control to the data (needed for cell-eval)
+    # Control prediction = control (no perturbation effect)
+    # Control ground truth = control
+    all_perts_with_ctrl = [control_label] + unique_perts
+    pred_matrix_with_ctrl = np.vstack([control_mean.reshape(1, -1), pred_matrix])
+    gt_matrix_with_ctrl = np.vstack([control_mean.reshape(1, -1), gt_matrix])
 
-def create_h5ad_output(
-    results: Dict[str, Any],
-    gene_names: List[str],
-    output_path: str,
-    fold: Optional[int] = None,
-) -> None:
-    """Create h5ad file compatible with cell-eval.
-
-    Creates an AnnData object with:
-        - X: Predicted expression matrix (cells x genes)
-        - obs: Cell metadata including perturbation labels
-        - var: Gene metadata
-        - layers['ground_truth']: Actual perturbed expression
-        - layers['control']: Control expression used as context
-    """
-    import anndata as ad
-    import pandas as pd
-
-    predictions = results["predictions"]  # (n_batches, n_cells, n_genes)
-    ground_truth = results["ground_truth"]
-    control = results["control"]
-    pert_names = results["perturbation_names"]
-
-    # Flatten batch dimension: (n_batches, n_cells, n_genes) -> (n_total_cells, n_genes)
-    n_batches, n_cells_per_batch, n_genes = predictions.shape
-    n_total_cells = n_batches * n_cells_per_batch
-
-    pred_flat = predictions.reshape(n_total_cells, n_genes)
-    gt_flat = ground_truth.reshape(n_total_cells, n_genes)
-    ctrl_flat = control.reshape(n_total_cells, n_genes)
-
-    # Create cell-level perturbation labels (same for all cells in a batch)
-    cell_pert_labels = []
-    cell_batch_ids = []
-    for batch_idx, pert_name in enumerate(pert_names):
-        cell_pert_labels.extend([pert_name] * n_cells_per_batch)
-        cell_batch_ids.extend([batch_idx] * n_cells_per_batch)
-
-    # Create observation DataFrame
+    # Save aggregated h5ad files (one row per perturbation - much smaller)
+    # Note: All data is in log1p space (compatible with cell-eval)
+    logging.info("Saving aggregated h5ad files (log1p normalized)...")
     obs = pd.DataFrame({
-        "perturbation": cell_pert_labels,
-        "batch_id": cell_batch_ids,
-        "cell_idx": list(range(n_cells_per_batch)) * n_batches,
+        "perturbation": all_perts_with_ctrl,
     })
-    obs.index = [f"cell_{i}" for i in range(n_total_cells)]
+    obs.index = all_perts_with_ctrl
 
-    # Create variable DataFrame
     var = pd.DataFrame(index=gene_names)
     var.index.name = "gene"
 
-    # Create AnnData
-    adata = ad.AnnData(
-        X=pred_flat.astype(np.float32),
-        obs=obs,
-        var=var,
+    # Save predictions h5ad
+    adata_pred = ad.AnnData(
+        X=pred_matrix_with_ctrl,
+        obs=obs.copy(),
+        var=var.copy(),
     )
-
-    # Add layers
-    adata.layers["ground_truth"] = gt_flat.astype(np.float32)
-    adata.layers["control"] = ctrl_flat.astype(np.float32)
-
-    # Add metadata
-    adata.uns["perturb_mean"] = {
-        "n_batches": n_batches,
-        "n_cells_per_batch": n_cells_per_batch,
-        "unique_perturbations": list(set(pert_names)),
-        "fold": fold,
-        "model": "PerturbMean",
-    }
-
-    # Save
-    logging.info(f"Saving predictions to {output_path}")
-    adata.write_h5ad(output_path)
-    logging.info(f"Saved AnnData with shape {adata.shape}")
-
-
-def create_aggregated_h5ad(
-    results: Dict[str, Any],
-    gene_names: List[str],
-    output_path: str,
-    fold: Optional[int] = None,
-) -> str:
-    """Create aggregated h5ad with one row per perturbation (mean across cells).
-
-    This format is often preferred for cell-eval as it compares perturbation-level
-    effects rather than individual cells.
-    """
-    import anndata as ad
-    import pandas as pd
-
-    predictions = results["predictions"]  # (n_batches, n_cells, n_genes)
-    ground_truth = results["ground_truth"]
-    pert_names = results["perturbation_names"]
-
-    # Aggregate across cells within each batch
-    pred_agg = predictions.mean(axis=1)  # (n_batches, n_genes)
-    gt_agg = ground_truth.mean(axis=1)
-
-    # Group by perturbation name and average (in case of multiple batches per perturbation)
-    pert_to_pred = {}
-    pert_to_gt = {}
-    for i, pert_name in enumerate(pert_names):
-        if pert_name not in pert_to_pred:
-            pert_to_pred[pert_name] = []
-            pert_to_gt[pert_name] = []
-        pert_to_pred[pert_name].append(pred_agg[i])
-        pert_to_gt[pert_name].append(gt_agg[i])
-
-    # Average across batches for each perturbation
-    unique_perts = sorted(pert_to_pred.keys())
-    pred_final = np.array([np.mean(pert_to_pred[p], axis=0) for p in unique_perts])
-    gt_final = np.array([np.mean(pert_to_gt[p], axis=0) for p in unique_perts])
-
-    # Create observation DataFrame
-    obs = pd.DataFrame({
-        "perturbation": unique_perts,
-    })
-    obs.index = unique_perts
-
-    # Create variable DataFrame
-    var = pd.DataFrame(index=gene_names)
-    var.index.name = "gene"
-
-    # Create AnnData
-    adata = ad.AnnData(
-        X=pred_final.astype(np.float32),
-        obs=obs,
-        var=var,
-    )
-    adata.layers["ground_truth"] = gt_final.astype(np.float32)
-
-    # Add metadata
-    adata.uns["perturb_mean"] = {
-        "unique_perturbations": unique_perts,
+    adata_pred.uns["perturb_mean"] = {
+        "unique_perturbations": all_perts_with_ctrl,
         "fold": fold,
         "model": "PerturbMean",
         "aggregation": "mean",
+        "normalization": "log1p",
     }
 
-    # Save
-    output_agg_path = output_path.replace(".h5ad", "_aggregated.h5ad")
-    logging.info(f"Saving aggregated predictions to {output_agg_path}")
-    adata.write_h5ad(output_agg_path)
-    logging.info(f"Saved aggregated AnnData with shape {adata.shape}")
+    output_pred_path = output_path.replace(".h5ad", "_pred.h5ad")
+    adata_pred.write_h5ad(output_pred_path)
+    logging.info(f"Saved predictions to {output_pred_path} with shape {adata_pred.shape}")
 
-    return output_agg_path
+    # Save ground truth h5ad (for cell-eval)
+    adata_real = ad.AnnData(
+        X=gt_matrix_with_ctrl,
+        obs=obs.copy(),
+        var=var.copy(),
+    )
+    adata_real.uns["perturb_mean"] = {
+        "unique_perturbations": all_perts_with_ctrl,
+        "fold": fold,
+        "type": "ground_truth",
+    }
+
+    output_real_path = output_path.replace(".h5ad", "_real.h5ad")
+    adata_real.write_h5ad(output_real_path)
+    logging.info(f"Saved ground truth to {output_real_path} with shape {adata_real.shape}")
+
+    # Clean up
+    del pred_matrix, gt_matrix, pred_matrix_with_ctrl, gt_matrix_with_ctrl
+    del adata_pred, adata_real
+
+    return metrics
 
 
 def main():
@@ -487,21 +433,22 @@ def main():
     )
     model.save_checkpoint(checkpoint_path)
 
-    # Run inference on test set
-    logging.info("Running inference on test set...")
-    results = run_inference(
+    # Run inference and save results (memory-efficient)
+    h5ad_path = os.path.join(
+        args.output_dir, f"predictions_fold_{args.fold}_{fold_cell_line}.h5ad"
+    )
+
+    metrics = run_inference_and_save(
         model=model,
         dataset=test_dataset,
         device=device,
+        gene_names=gene_names,
+        output_path=h5ad_path,
+        fold=args.fold,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
+        create_aggregated=args.aggregated,
     )
-
-    logging.info(f"Generated predictions for {len(results['perturbation_names'])} batches")
-
-    # Compute metrics
-    logging.info("Computing metrics...")
-    metrics = compute_metrics(results)
 
     # Add fold info to metrics
     metrics["fold"] = args.fold
@@ -526,33 +473,17 @@ def main():
         json.dump(metrics, f, indent=2)
     logging.info(f"Saved metrics to {metrics_path}")
 
-    # Save h5ad
-    h5ad_path = os.path.join(
-        args.output_dir, f"predictions_fold_{args.fold}_{fold_cell_line}.h5ad"
-    )
-    create_h5ad_output(
-        results=results,
-        gene_names=gene_names,
-        output_path=h5ad_path,
-        fold=args.fold,
-    )
-
-    # Also create aggregated output if requested
-    if args.aggregated:
-        create_aggregated_h5ad(
-            results=results,
-            gene_names=gene_names,
-            output_path=h5ad_path,
-            fold=args.fold,
-        )
-
     logging.info("Inference complete!")
 
     # Print cell-eval usage hint
+    h5ad_pred_path = h5ad_path.replace(".h5ad", "_pred.h5ad")
+    h5ad_real_path = h5ad_path.replace(".h5ad", "_real.h5ad")
     print("\n" + "=" * 60)
     print("To evaluate with cell-eval:")
     print("=" * 60)
-    print(f"cell-eval run -i {h5ad_path} \\")
+    print(f"cell-eval run \\")
+    print(f"    -ap {h5ad_pred_path} \\")
+    print(f"    -ar {h5ad_real_path} \\")
     print(f"    --pert-col perturbation \\")
     print(f"    --control-pert {args.control_label}")
     print("=" * 60)

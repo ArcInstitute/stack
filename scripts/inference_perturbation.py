@@ -88,10 +88,13 @@ def run_inference(
                 num_steps=num_sampling_steps,
             )
 
-            # Collect results
-            all_predictions.append(result["perturbed"].cpu().numpy())
-            all_ground_truth.append(perturbed.cpu().numpy())
-            all_control.append(control.cpu().numpy())
+            # Collect results (in log1p space for cell-eval compatibility)
+            # Note: control and perturbed are ALREADY log1p normalized from dataset
+            # Clamp predictions to >= 0 since log1p values cannot be negative
+            pred_log1p = result["perturbed_log1p"].clamp(min=0).cpu().numpy()
+            all_predictions.append(pred_log1p)
+            all_ground_truth.append(perturbed.cpu().numpy())  # Already log1p normalized
+            all_control.append(control.cpu().numpy())  # Already log1p normalized
             all_pert_names.extend(pert_names)
             all_pert_ids.append(pert_ids.cpu().numpy())
 
