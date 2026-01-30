@@ -181,6 +181,34 @@ class LightningFinetunedModel(pl.LightningModule):
 
         return {'val_loss': total_loss}
 
+    def test_step(self, batch: Any, batch_idx: int):  # type: ignore[override]
+        result = self._forward_pass_with_teacher(batch)
+
+        total_loss = result['loss']
+        recon_loss = result['recon_loss']
+        mmd_loss = result['mmd_loss']
+        sw_loss = result['sw_loss']
+        cls_loss = result['cls_loss']
+        cls_acc = result['cls_acc']
+
+        self.log('test_loss', total_loss, on_epoch=True, prog_bar=True, sync_dist=True)
+        self.log('test/recon_loss', recon_loss, on_epoch=True, sync_dist=True)
+        self.log('test/mmd_loss', mmd_loss, on_epoch=True, sync_dist=True)
+        self.log('test/sw_loss', sw_loss, on_epoch=True, sync_dist=True)
+        self.log('test/cls_loss', cls_loss, on_epoch=True, sync_dist=True)
+        self.log('test/cls_acc', cls_acc, on_epoch=True, sync_dist=True)
+
+        if 'masked_mae' in result:
+            self.log('test/masked_mae', result['masked_mae'], on_epoch=True, sync_dist=True)
+        if 'masked_corr' in result:
+            self.log('test/masked_corr', result['masked_corr'], on_epoch=True, sync_dist=True)
+        if 'sw_predict' in result:
+            self.log('test/sw_predict', result['sw_predict'], on_epoch=True, sync_dist=True)
+        if 'mask_rate' in result:
+            self.log('test/mask_rate', result['mask_rate'], on_epoch=True, sync_dist=True)
+
+        return {'test_loss': total_loss}
+
     def configure_optimizers(self):  # type: ignore[override]
         optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
         config: Dict[str, Any] = {'optimizer': optimizer}

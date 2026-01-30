@@ -55,6 +55,18 @@ class LightningGeneModel(pl.LightningModule):
         self.log("val/mask_rate", result["mask_rate"], on_epoch=True, sync_dist=True)
         return {"val_loss": total_loss}
 
+    def test_step(self, batch, batch_idx):  # type: ignore[override]
+        features, _ = batch
+        result = self.model(features, return_loss=True)
+        total_loss = result["loss"]
+        self.log("test_loss", total_loss, on_epoch=True, prog_bar=True, sync_dist=True)
+        self.log("test/recon_loss", result["recon_loss"], on_epoch=True, sync_dist=True)
+        self.log("test/sw_loss", result["sw_loss"], on_epoch=True, sync_dist=True)
+        self.log("test/masked_mae", result["masked_mae"], on_epoch=True, sync_dist=True)
+        self.log("test/masked_corr", result["masked_corr"], on_epoch=True, sync_dist=True)
+        self.log("test/mask_rate", result["mask_rate"], on_epoch=True, sync_dist=True)
+        return {"test_loss": total_loss}
+
     def configure_optimizers(self):  # type: ignore[override]
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
         scheduler_dict = configure_scheduler(optimizer, self.scheduler_config)
