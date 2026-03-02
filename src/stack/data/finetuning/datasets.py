@@ -380,7 +380,7 @@ class MultiDatasetMetadataCache:
                             X_group = f["X"]
                         
                         # Check if sparse
-                        is_sparse = not hasattr(X_group, 'shape') or ('data' in X_group and 'indices' in X_group)
+                        is_sparse = isinstance(X_group, h5py.Group) and 'data' in X_group and 'indices' in X_group
                         
                         # Store file information
                         file_info = {
@@ -708,7 +708,7 @@ class MultiDatasetMetadataCache:
             else:
                 # Dense matrix: direct slicing
                 log.debug(f"Using dense matrix reading for {len(absolute_indices_to_load)} rows")
-                expr_subset = X_group[np.ix_(absolute_indices_to_load, source_indices_in_file)]
+                expr_subset = X_group[sorted(absolute_indices_to_load)][:, source_indices_in_file]
                 mapped_matrix[:, target_indices_in_result] = expr_subset.astype(np.float32)
 
         except Exception as e:
@@ -1609,7 +1609,7 @@ class TestSamplerDataset(Dataset):
             'use_raw': use_raw,
             'gene_mapping': gene_mapping,
             'organism_mask': human_mask,
-            'is_sparse': not hasattr(X_group, 'shape') or ('data' in X_group and 'indices' in X_group),
+            'is_sparse': isinstance(X_group, h5py.Group) and 'data' in X_group and 'indices' in X_group,
             'found_genes': found_genes
         }
         
@@ -1858,7 +1858,7 @@ class TestSamplerDataset(Dataset):
             else:
                 # Dense matrix: direct slicing
                 log.debug(f"Using dense matrix reading for {len(absolute_indices_to_load)} rows")
-                expr_subset = X_group[np.ix_(absolute_indices_to_load, source_indices_in_file)]
+                expr_subset = X_group[sorted(absolute_indices_to_load)][:, source_indices_in_file]
                 mapped_matrix[:, target_indices_in_result] = expr_subset.astype(np.float32)
 
         except Exception as e:
