@@ -3,7 +3,24 @@
 
 Stack is a large-scale encoder-decoder foundation model trained on 150 million uniformly-preprocessed single cells. It introduces a novel tabular attention architecture that enables both intra- and inter-cellular information flow, setting cell-by-gene matrix chunks as the basic input data unit. Through in-context learning, Stack offers substantial performance improvements in generalizing biological effects and enables generation of unseen cell profiles in novel contexts.
 
+## System requirements
+
+Stack is primarily developed and tested on Linux systems.
+
+- **Operating system**: Tested on Ubuntu 22.04.5 LTS with Linux kernel 5.15.0-164-generic on x86_64
+- **Hardware**: NVIDIA GPU recommended for model training and large-scale inference; tested on NVIDIA H100 80GB HBM3
+- **Python**: Tested with Python 3.10.18
+- **PyTorch**: Tested with PyTorch 2.5.1+cu121
+- **CUDA**: Tested with a PyTorch CUDA 12.1 build
+- **NVIDIA driver**: Tested with version 535.230.02
+- **cuDNN**: Tested with version 91100
+- **Compiler**: Tested with GCC/G++ 11.4.0 with C++17 support
+
+Software dependencies are specified in `setup.cfg`.
+
 ## Installation
+
+Typical installation time is less than 1 minute on a standard desktop or workstation with a compatible PyTorch environment.
 
 ### Using pip
 ```bash
@@ -29,6 +46,8 @@ uv pip install -e .
 
 
 ## Quick Start
+
+The demo tutorials use small example datasets, with download instructions provided in the notebooks. They are expected to run in several minutes on a standard desktop or workstation with a GPU, and may take longer on CPU-only systems.
 
 - Use Stack to embed your single-cell data: [Notebook](notebooks/tutorial-embed.ipynb)
 - Use Stack to zero-shot predict unseen perturbation/observation profiles: [Notebook](notebooks/tutorial-predict.ipynb)
